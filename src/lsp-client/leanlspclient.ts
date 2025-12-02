@@ -4,22 +4,17 @@ import {
   window,
   TextDocument,
   Position,
-  Range,
   OutputChannel,
-  commands,
-  Uri,
 } from "vscode";
 import { Trace } from "vscode-languageclient/node";
 import {
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
-  VersionedTextDocumentIdentifier,
 } from "vscode-languageclient/node";
 import { AbstractLspClient } from "./abstractLspClient";
 import { GoalAnswer, GoalConfig, GoalRequest, PpString } from "../../lib/types";
 import { WaterproofLogger as wpl } from "../helpers";
-import { version } from "os";
 import { WaterproofCompletion } from "@impermeable/waterproof-editor";
 import { MessageType } from "../../shared";
 import { DocumentSymbol, DocumentSymbolParams, DocumentSymbolRequest } from "vscode-languageclient";
