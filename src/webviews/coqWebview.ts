@@ -29,9 +29,9 @@ export abstract class CoqWebview extends EventEmitter implements Disposable {
     protected extensionUri: Uri;
     protected _state: WebviewState;
     protected name: string;
-    
+
     private readonly _supportInsert: boolean;
-    private disposables: Disposable[] = [];
+    protected disposables: Disposable[] = []; //change to protected so infoview can access
 
     constructor(extensionUri: Uri, name: string, supportInsert: boolean = false) {
         super();
@@ -92,8 +92,8 @@ export abstract class CoqWebview extends EventEmitter implements Disposable {
         }
 
         this._panel.onDidChangeViewState((e) => {
-            if(e.webviewPanel.active) this.emit(WebviewEvents.change, WebviewState.focus);
-            if(e.webviewPanel.visible) {
+            if (e.webviewPanel.active) this.emit(WebviewEvents.change, WebviewState.focus);
+            if (e.webviewPanel.visible) {
                 this.changeState(WebviewState.visible);
             } else {
                 this.changeState(WebviewState.open);
