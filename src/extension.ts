@@ -28,7 +28,6 @@ import { CoqEditorProvider } from "./pm-editor";
 import { checkConflictingExtensions, excludeCoqFileTypes } from "./util";
 import { WebviewManager, WebviewManagerEvents } from "./webviewManager";
 import { DebugPanel } from "./webviews/goalviews/debug";
-// CHANGED: Import the new GoalsPanel (multiplexer)
 import { GoalsPanel } from "./webviews/goalviews/goalsPanel";
 import { SidePanelProvider, addSidePanel } from "./webviews/sidePanel";
 import { Search } from "./webviews/standardviews/search";
@@ -36,7 +35,6 @@ import { Help } from "./webviews/standardviews/help";
 import { ExecutePanel } from "./webviews/standardviews/execute";
 import { SymbolsPanel } from "./webviews/standardviews/symbols";
 import { TacticsPanel } from "./webviews/standardviews/tactics";
-
 import { VersionChecker } from "./version-checker";
 import { Utils } from "vscode-uri";
 import {
@@ -58,6 +56,8 @@ import { LspClientFactory } from "./mainNode";
 import { LeanInfoviewWebview } from "./webviews/infoview";
 import { convertToString } from "../lib/types";
 import { Hypothesis } from "./api";
+// Added MessageType import
+import { MessageType, Message } from "../shared/Messages";
 
 export function activate(_context: ExtensionContext): void {
 
@@ -154,6 +154,9 @@ export class Waterproof implements Disposable {
         wpl.log("Focus event received");
         if (document.languageId.startsWith("lean")) {
           this.goalsPanel.setMode('lean');
+          
+          // Switch tactics panel to Lean mode (safely)
+          this.safePostMessage("tactics", { type: MessageType.setTacticsMode, body: "lean" });
 
           if (!isLeanClientRunning()) {
             console.warn(
@@ -202,6 +205,9 @@ export class Waterproof implements Disposable {
           }
         } else {
           this.goalsPanel.setMode('coq');
+
+          // Switch tactics panel to Coq mode (safely)
+          this.safePostMessage("tactics", { type: MessageType.setTacticsMode, body: "coq" });
 
           if (!this.coqClientRunning) {
             console.warn(
@@ -483,6 +489,17 @@ export class Waterproof implements Disposable {
       WaterproofConfigHelper.update(WaterproofSetting.ShowLineNumbersInEditor, updated);
       window.showInformationMessage(`Waterproof: Line numbers in editor are now ${updated ? "shown" : "hidden"}.`);
     });
+  }
+
+  /**
+   * Safely posts a message to a webview. If the webview is not ready/open, it catches the error and ignores it.
+   */
+  private safePostMessage(view: string, message: Message) {
+    try {
+       this.webviewManager.postMessage(view, message);
+    } catch (e) {
+       // Ignore errors if the view is not yet ready or visible
+    }
   }
 
   /**
