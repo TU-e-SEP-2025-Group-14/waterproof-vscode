@@ -35,17 +35,15 @@ import { Help } from "./webviews/standardviews/help";
 import { ExecutePanel } from "./webviews/standardviews/execute";
 import { SymbolsPanel } from "./webviews/standardviews/symbols";
 import { TacticsPanel } from "./webviews/standardviews/tactics";
-
 import { VersionChecker } from "./version-checker";
 import { Utils } from "vscode-uri";
 import {
   WaterproofConfigHelper,
   WaterproofSetting,
-  WaterproofLogger as wpl, 
-  WaterproofFileUtil, 
+  WaterproofLogger as wpl,
+  WaterproofFileUtil,
   WaterproofPackageJSON
 } from "./helpers";
-// Lean LSP
 import {
   activateLeanClient,
   deactivateLeanClient,
@@ -55,8 +53,11 @@ import {
   restartLeanClient,
 } from "./lsp-client/leanlspclient";
 import { LspClientFactory } from "./mainNode";
+import { LeanInfoviewWebview } from "./webviews/infoview";
 import { convertToString } from "../lib/types";
 import { Hypothesis } from "./api";
+// Added MessageType import
+import { MessageType, Message } from "../shared/Messages";
 
 export function activate(_context: ExtensionContext): void {
 
@@ -65,50 +66,32 @@ export function activate(_context: ExtensionContext): void {
     `waterproof-tue.waterproof#waterproof.setup`,
     false
   );
+  const context = _context as unknown as ExtensionContext;
+  activateLeanClient(context).catch((err) =>
+    console.error("lean client activation failed:", err)
+  );
+  const disposableRestart = commands.registerCommand("lean.restart", () =>
+    restartLeanClient(context)
+  );
+  context.subscriptions.push(disposableRestart);
 }
 
-/**
- * Main extension class
- */
 export class Waterproof implements Disposable {
-  /** The extension context */
   private readonly context: ExtensionContext;
-
-  /** The resources that must be released when this extension is disposed of */
   private readonly disposables: Disposable[] = [];
-
-  /** The function that can create a new Coq or Lean LSP client */
   private readonly clientFactory: LspClientFactory;
-
-  /** The manager for (communication between) webviews */
   public readonly webviewManager: WebviewManager;
-
-  /**
-   * The client that communicates with the Coq LSP server.
-   * It's created by the `initializeClient` function.
-   */
   public coqClient!: CoqLspClient;
   public leanClient!: LeanLspClient;
   public activeClient: string;
-  /** The status bar item that indicates whether this extension is running */
   private readonly statusBar: IStatusComponent;
-
-  /** The components that display or process the goals and messages on the current line */
   private readonly goalsComponents: IGoalsComponent[] = [];
-
-  /** Main executor that allows for arbitrary execution */
   public readonly executorComponent: IExecutor;
-
   private sidePanelProvider: SidePanelProvider;
-
   private coqClientRunning: boolean = false;
   private leanClientRunning: boolean = false;
+  private goalsPanel!: GoalsPanel;
 
-  /**
-   * Constructs the extension lifecycle object.
-   *
-   * @param context the extension context object
-   */
   constructor(
     context: ExtensionContext,
     clientFactory: LspClientFactory,
@@ -122,6 +105,17 @@ export class Waterproof implements Disposable {
     this.clientFactory = clientFactory;
     this.activeClient = "none";
     this.webviewManager = new WebviewManager();
+
+    this.statusBar = new CoqnitiveStatusBar();
+
+    this.goalsPanel = new GoalsPanel(
+      this.context.extensionUri,
+      CoqLspClientConfig.create()
+    );
+    this.goalsComponents.push(this.goalsPanel);
+
+    this.webviewManager.addToolWebview("goals", this.goalsPanel);
+
     this.webviewManager.on(
       WebviewManagerEvents.editorReady,
       (document: TextDocument) => {
@@ -159,6 +153,11 @@ export class Waterproof implements Disposable {
       async (document: TextDocument) => {
         wpl.log("Focus event received");
         if (document.languageId.startsWith("lean")) {
+          this.goalsPanel.setMode('lean');
+          
+          // Switch tactics panel to Lean mode (safely)
+          this.safePostMessage("tactics", { type: MessageType.setTacticsMode, body: "lean" });
+
           if (!isLeanClientRunning()) {
             console.warn(
               "Focus event received before client is ready. Waiting..."
@@ -178,8 +177,23 @@ export class Waterproof implements Disposable {
           }
           this.leanClient = <LeanLspClient>getLeanInstance();
           this.activeClient = "lean4";
-          // update active document
-          // only unset cursor when focussing different document (otherwise cursor position is often lost and user has to double click)
+          const editor = window.activeTextEditor;
+          if (editor) {
+            const position = editor.selection.active;
+            const location: Location = {
+              uri: document.uri.toString(),
+              range: {
+                start: {
+                  line: position.line, character:
+                    position.character
+                },
+                end: {
+                  line: position.line, character: position.character
+                }
+              }
+            };
+            this.goalsPanel.updateLocation(location);
+          }
           if (
             this.leanClient.activeDocument?.uri.toString() !=
             document.uri.toString()
@@ -190,7 +204,11 @@ export class Waterproof implements Disposable {
             for (const g of this.goalsComponents) g.updateGoals(undefined);
           }
         } else {
-          // Wait for client to initialize
+          this.goalsPanel.setMode('coq');
+
+          // Switch tactics panel to Coq mode (safely)
+          this.safePostMessage("tactics", { type: MessageType.setTacticsMode, body: "coq" });
+
           if (!this.coqClientRunning) {
             console.warn(
               "Focus event received before client is ready. Waiting..."
@@ -210,68 +228,62 @@ export class Waterproof implements Disposable {
           }
           wpl.log("Client state");
           this.activeClient = 'coq';
-          // update active document
-          // only unset cursor when focussing different document (otherwise cursor position is often lost and user has to double click)
-          if (this.coqClient.activeDocument?.uri.toString() != document.uri.toString()) {
+
+          if (this.coqClient.activeDocument?.uri.toString() !== document.uri.toString()) {
             this.coqClient.activeDocument = document;
             this.coqClient.activeCursorPosition = undefined;
             this.webviewManager.open("goals");
             for (const g of this.goalsComponents) g.updateGoals(undefined);
-
           }
         }
       });
-    this.webviewManager.on(WebviewManagerEvents.cursorChange, (document: TextDocument, position: Position) => {
-      if (document.languageId.startsWith('lean')) {
-        this.leanClient.activeDocument = document;
-        this.leanClient.activeCursorPosition = position;
-        this.updateGoalsLean(document, position);
-      } else {
-        // update active document and cursor
-        this.coqClient.activeDocument = document;
-        this.coqClient.activeCursorPosition = position;
-        this.updateGoalsCoq(document, position);  // TODO: error handling
-      }
-    });
-    this.webviewManager.on(WebviewManagerEvents.command, (source: IExecutor, command: string) => {
-      if (command == "createHelp") {
-        source.setResults(["createHelp"]);
-      } else {
-        if (this.activeClient.startsWith('lean')) {
-          executeCommand(this.leanClient, command).then(
-            results => {
-              source.setResults(results);
-            },
-            (error: Error) => {
-              source.setResults(["Error: " + error.message]);  // (temp)
-            }
-          );
+
+    this.webviewManager.on(
+      WebviewManagerEvents.cursorChange,
+      (document: TextDocument, position: Position) => {
+        if (document.languageId.startsWith('lean')) {
+          this.leanClient.activeDocument = document;
+          this.leanClient.activeCursorPosition = position;
+          this.updateGoalsLean(document, position);
         } else {
-          executeCommand(this.coqClient, command).then(
-            results => {
-              source.setResults(results);
-            },
-            (error: Error) => {
-              source.setResults(["Error: " + error.message]);  // (temp)
-            }
-          );
+          this.coqClient.activeDocument = document;
+          this.coqClient.activeCursorPosition = position;
+          this.updateGoalsCoq(document, position);
         }
-      }
-    });
+      });
+
+    this.webviewManager.on(
+      WebviewManagerEvents.command,
+      (source: IExecutor, command: string) => {
+        if (command == "createHelp") {
+          source.setResults(["createHelp"]);
+        } else {
+          if (this.activeClient.startsWith('lean')) {
+            executeCommand(this.leanClient, command).then(
+              results => {
+                source.setResults(results);
+              },
+              (error: Error) => {
+                source.setResults(["Error: " + error.message]);
+              }
+            );
+          } else {
+            executeCommand(this.coqClient, command).then(
+              results => {
+                source.setResults(results);
+              },
+              (error: Error) => {
+                source.setResults(["Error: " + error.message]);
+              }
+            );
+          }
+        }
+      });
 
     this.disposables.push(
       CoqEditorProvider.register(context, this.webviewManager)
     );
 
-    // make relevant gui components
-    this.statusBar = new CoqnitiveStatusBar();
-    const goalsPanel = new GoalsPanel(
-      this.context.extensionUri,
-      CoqLspClientConfig.create()
-    );
-    this.goalsComponents.push(goalsPanel);
-    this.webviewManager.addToolWebview("goals", goalsPanel);
-    this.webviewManager.open("goals");
     this.webviewManager.addToolWebview(
       "symbols",
       new SymbolsPanel(this.context.extensionUri)
@@ -301,32 +313,20 @@ export class Waterproof implements Disposable {
 
     this.executorComponent = executorPanel;
 
-    // register commands
     wpl.log("Calling initializeClient...");
     this.registerCommand("start", this.initializeClient);
     this.registerCommand("restart", this.restartClient);
     this.registerCommand("toggle", this.toggleClient);
     this.registerCommand("stop", this.stopClient);
     this.registerCommand("exportExerciseSheet", this.exportExerciseSheet);
-
-    // Register the new Waterproof Document command
     this.registerCommand("newWaterproofDocument", this.newFileCommand);
-
-    // FIXME: Move command handlers to their own location.
-
     this.registerCommand("openTutorial", this.waterproofTutorialCommand);
 
     this.registerCommand("pathSetting", () => {
-      commands.executeCommand(
-        "workbench.action.openSettings",
-        "waterproof.path"
-      );
+      commands.executeCommand("workbench.action.openSettings", "waterproof.path");
     });
     this.registerCommand("argsSetting", () => {
-      commands.executeCommand(
-        "workbench.action.openSettings",
-        "waterproof.args"
-      );
+      commands.executeCommand("workbench.action.openSettings", "waterproof.args");
     });
     this.registerCommand("defaultPath", () => {
       let defaultValue: string | undefined;
@@ -412,15 +412,15 @@ export class Waterproof implements Disposable {
     this.registerCommand("autoInstall", async () => {
       commands.executeCommand(`waterproof.defaultPath`);
 
-            const downloadLink = WaterproofPackageJSON.installerDownloadLinkWindows(this.context);
+      const downloadLink = WaterproofPackageJSON.installerDownloadLinkWindows(this.context);
 
-            const windowsInstallationScript = `echo Begin Waterproof dependency software installation && echo Downloading installer ... && curl -o Waterproof_Installer.exe -L ${downloadLink} && echo Installer Finished Downloading - Please wait for the Installer to execute, this can take up to a few minutes && Waterproof_Installer.exe && echo Required Files Installed && del Waterproof_Installer.exe && echo COMPLETE - The Waterproof checker will restart automatically a few seconds after this terminal is closed`
+      const windowsInstallationScript = `echo Begin Waterproof dependency software installation && echo Downloading installer ... && curl -o Waterproof_Installer.exe -L ${downloadLink} && echo Installer Finished Downloading - Please wait for the Installer to execute, this can take up to a few minutes && Waterproof_Installer.exe && echo Required Files Installed && del Waterproof_Installer.exe && echo COMPLETE - The Waterproof checker will restart automatically a few seconds after this terminal is closed`
 
-            // default location of the uninstaller
-            const uninstallerLocation =
-                WaterproofFileUtil.join(
-                    WaterproofFileUtil.getDirectory(WaterproofPackageJSON.defaultCoqLspPathWindows(this.context)),
-                    `Uninstall.exe`);
+      // default location of the uninstaller
+      const uninstallerLocation =
+        WaterproofFileUtil.join(
+          WaterproofFileUtil.getDirectory(WaterproofPackageJSON.defaultCoqLspPathWindows(this.context)),
+          `Uninstall.exe`);
 
       await this.stopClient();
 
@@ -484,59 +484,70 @@ export class Waterproof implements Disposable {
       }
     });
 
-        this.registerCommand("toggleInEditorLineNumbers", () => {
-            const updated = !WaterproofConfigHelper.get(WaterproofSetting.ShowLineNumbersInEditor);
-            WaterproofConfigHelper.update(WaterproofSetting.ShowLineNumbersInEditor, updated);
-            window.showInformationMessage(`Waterproof: Line numbers in editor are now ${updated ? "shown" : "hidden"}.`);
-        });
+    this.registerCommand("toggleInEditorLineNumbers", () => {
+      const updated = !WaterproofConfigHelper.get(WaterproofSetting.ShowLineNumbersInEditor);
+      WaterproofConfigHelper.update(WaterproofSetting.ShowLineNumbersInEditor, updated);
+      window.showInformationMessage(`Waterproof: Line numbers in editor are now ${updated ? "shown" : "hidden"}.`);
+    });
+  }
+
+  /**
+   * Safely posts a message to a webview. If the webview is not ready/open, it catches the error and ignores it.
+   */
+  private safePostMessage(view: string, message: Message) {
+    try {
+       this.webviewManager.postMessage(view, message);
+    } catch (e) {
+       // Ignore errors if the view is not yet ready or visible
     }
+  }
 
-    /**
-     * Request the goals for the current document and cursor position.
-     */
-    public async goals(): Promise<{currentGoal: string, hypotheses: Array<Hypothesis>, otherGoals: string[]}> {
-      if (this.activeClient == "lean4") {
-        if (!this.leanClient.activeDocument || !this.leanClient.activeCursorPosition) { throw new Error("No active document or cursor position."); }
+  /**
+   * Request the goals for the current document and cursor position.
+   */
+  public async goals(): Promise<{ currentGoal: string, hypotheses: Array<Hypothesis>, otherGoals: string[] }> {
+    if (this.activeClient == "lean4") {
+      if (!this.leanClient.activeDocument || !this.leanClient.activeCursorPosition) { throw new Error("No active document or cursor position."); }
 
-        const document = this.leanClient.activeDocument;
-        const position = this.leanClient.activeCursorPosition;
+      const document = this.leanClient.activeDocument;
+      const position = this.leanClient.activeCursorPosition;
 
-        const params = this.leanClient.createGoalsRequestParameters(document, position);
-        const goalResponse = await this.leanClient.requestGoals(params);
+      const params = this.leanClient.createGoalsRequestParameters(document, position);
+      const goalResponse = await this.leanClient.requestGoals(params);
 
-        if (goalResponse.goals === undefined) {
-            throw new Error("Response contained no goals.");
-        }
-
-        // Convert goals and hypotheses to strings
-        const goalsAsStrings = goalResponse.goals.goals.map(g => convertToString(g.ty));
-        // Note: only taking hypotheses from the first goal
-        const hyps = goalResponse.goals.goals[0].hyps.map(h => { return {name: convertToString(h.names[0]), content: convertToString(h.ty)}; });
-
-        
-        return {currentGoal: goalsAsStrings[0], hypotheses: hyps, otherGoals: goalsAsStrings.slice(1)};
-      } else {
-        if (!this.coqClient.activeDocument || !this.coqClient.activeCursorPosition) { throw new Error("No active document or cursor position."); }
-
-        const document = this.coqClient.activeDocument;
-        const position = this.coqClient.activeCursorPosition;
-
-        const params = this.coqClient.createGoalsRequestParameters(document, position);
-        const goalResponse = await this.coqClient.requestGoals(params);
-
-        if (goalResponse.goals === undefined) {
-            throw new Error("Response contained no goals.");
-        }
-
-        // Convert goals and hypotheses to strings
-        const goalsAsStrings = goalResponse.goals.goals.map(g => convertToString(g.ty));
-        // Note: only taking hypotheses from the first goal
-        const hyps = goalResponse.goals.goals[0].hyps.map(h => { return {name: convertToString(h.names[0]), content: convertToString(h.ty)}; });
-
-        
-        return {currentGoal: goalsAsStrings[0], hypotheses: hyps, otherGoals: goalsAsStrings.slice(1)};
+      if (goalResponse.goals === undefined) {
+        throw new Error("Response contained no goals.");
       }
+
+      // Convert goals and hypotheses to strings
+      const goalsAsStrings = goalResponse.goals.goals.map(g => convertToString(g.ty));
+      // Note: only taking hypotheses from the first goal
+      const hyps = goalResponse.goals.goals[0].hyps.map(h => { return { name: convertToString(h.names[0]), content: convertToString(h.ty) }; });
+
+
+      return { currentGoal: goalsAsStrings[0], hypotheses: hyps, otherGoals: goalsAsStrings.slice(1) };
+    } else {
+      if (!this.coqClient.activeDocument || !this.coqClient.activeCursorPosition) { throw new Error("No active document or cursor position."); }
+
+      const document = this.coqClient.activeDocument;
+      const position = this.coqClient.activeCursorPosition;
+
+      const params = this.coqClient.createGoalsRequestParameters(document, position);
+      const goalResponse = await this.coqClient.requestGoals(params);
+
+      if (goalResponse.goals === undefined) {
+        throw new Error("Response contained no goals.");
+      }
+
+      // Convert goals and hypotheses to strings
+      const goalsAsStrings = goalResponse.goals.goals.map(g => convertToString(g.ty));
+      // Note: only taking hypotheses from the first goal
+      const hyps = goalResponse.goals.goals[0].hyps.map(h => { return { name: convertToString(h.names[0]), content: convertToString(h.ty) }; });
+
+
+      return { currentGoal: goalsAsStrings[0], hypotheses: hyps, otherGoals: goalsAsStrings.slice(1) };
     }
+  }
 
   /**
    * Get the currently active document in the editor.
@@ -551,99 +562,99 @@ export class Waterproof implements Disposable {
     }
   }
 
-    /**
-     * Executes the Help command at the cursor position and returns the output.
-     */
-    public async help(): Promise<Array<string>> {
-        // Execute command
-        const wpHelpResponse = await executeCommandFullOutput(this.coqClient, "Help.");
-        // Return the help messages. val[0] contains the levels, which we ignore.
-        return wpHelpResponse.feedback.map(val => val[1]);
+  /**
+   * Executes the Help command at the cursor position and returns the output.
+   */
+  public async help(): Promise<Array<string>> {
+    // Execute command
+    const wpHelpResponse = await executeCommandFullOutput(this.coqClient, "Help.");
+    // Return the help messages. val[0] contains the levels, which we ignore.
+    return wpHelpResponse.feedback.map(val => val[1]);
+  }
+
+  // TODO: add lean client to proofContext
+  /**
+   * Returns information about the current proof on a document level.
+   * This function will look at the current document to figure out what
+   * statement the user is currently proving.
+   * @param cursorMarker The marker string to insert to indicate where the user has placed there
+   * cursor in the current proof.
+   * @returns An object containing:
+   * - `name`: The name of the provable statement.
+   * - `full`: The full statement that the user is working on from Theorem, Lemma, etc to Qed.
+   * - `withCursorMarker`: The same as `full` but contains the {@linkcode cursorMarker} at the point where
+   * the user has placed the cursor.
+   */
+  public async proofContext(cursorMarker: string = "{!* CURSOR *!}"): Promise<{
+    name: string,
+    full: string
+    withCursorMarker: string
+  }> {
+    if (!this.coqClient.activeDocument || !this.coqClient.activeCursorPosition) {
+      throw new Error("No active document or cursor position.");
     }
 
-    // TODO: add lean client to proofContext
-    /**
-     * Returns information about the current proof on a document level.
-     * This function will look at the current document to figure out what
-     * statement the user is currently proving.
-     * @param cursorMarker The marker string to insert to indicate where the user has placed there
-     * cursor in the current proof.
-     * @returns An object containing:
-     * - `name`: The name of the provable statement.
-     * - `full`: The full statement that the user is working on from Theorem, Lemma, etc to Qed.
-     * - `withCursorMarker`: The same as `full` but contains the {@linkcode cursorMarker} at the point where
-     * the user has placed the cursor.
-     */
-    public async proofContext(cursorMarker: string = "{!* CURSOR *!}"): Promise<{
-        name: string,
-        full: string
-        withCursorMarker: string
-    }> {
-        if (!this.coqClient.activeDocument || !this.coqClient.activeCursorPosition) {
-            throw new Error("No active document or cursor position.");
-        }
+    const document = this.coqClient.activeDocument;
+    const position = this.coqClient.activeCursorPosition;
+    const posAsOffset = document.offsetAt(position);
 
-        const document = this.coqClient.activeDocument;
-        const position = this.coqClient.activeCursorPosition;
-        const posAsOffset = document.offsetAt(position);
+    // Regex to find the end of the proof the user is working on.
+    const endRegex = /(?:Qed|Admitted|Defined)\.\s/;
+    // We request the document symbols with the goal of finding the lemma the user is working on.
+    const symbols = await this.coqClient.requestSymbols();
+    const firstBefore = symbols.filter(s => {
+      const sPos = new Position(s.range.start.line, s.range.start.character);
+      return sPos.isBefore(position);
+    }).at(-1);
 
-        // Regex to find the end of the proof the user is working on.
-        const endRegex = /(?:Qed|Admitted|Defined)\.\s/;
-        // We request the document symbols with the goal of finding the lemma the user is working on.
-        const symbols = await this.coqClient.requestSymbols();
-        const firstBefore = symbols.filter(s => {
-            const sPos = new Position(s.range.start.line, s.range.start.character);
-            return sPos.isBefore(position);
-        }).at(-1);
+    if (firstBefore === undefined) {
+      throw new Error("Could not find lemma before cursor.");
+    }
+    // Compute the offset into the document where the proof starts (will be the position before Lemma)
+    const startProof = document.offsetAt(new Position(firstBefore.range.start.line, firstBefore.range.start.character));
 
-        if (firstBefore === undefined) {
-            throw new Error("Could not find lemma before cursor.");
-        }
-        // Compute the offset into the document where the proof starts (will be the position before Lemma)
-        const startProof = document.offsetAt(new Position(firstBefore.range.start.line, firstBefore.range.start.character));
+    // Get the part of the text of the document starting at the lemma statement.
+    const docText = document.getText().substring(startProof);
+    const proofClose = docText.match(endRegex);
 
-        // Get the part of the text of the document starting at the lemma statement.
-        const docText = document.getText().substring(startProof);
-        const proofClose = docText.match(endRegex);
-
-        if (proofClose === null) {
-            throw new Error("Could not find end of proof.");
-        }
-
-        // Get the text of the proof from the document, we need to add startProof to the index since the regex was run on a su
-        const theProof = docText.substring(0, proofClose.index! + proofClose[0].length);
-
-        // Helper function to remove input-area tags, coq markers and extra whitespace from input string
-        const removeMarkersAndWhitespace = (input: string) => {
-            return input.replace(/<input-area>\s*```coq\s*/g, "")
-                .replace(/\s*```\s*<\/input-area>/g, "")
-                .replace(/```coq/g, "")
-                .replace(/```/g, "")
-                .replace(/\s+/g, " ");
-        }
-
-        const offsetIntoMatch = posAsOffset - startProof;
-
-        return {
-            full: removeMarkersAndWhitespace(theProof),
-            withCursorMarker: removeMarkersAndWhitespace(theProof.substring(0, offsetIntoMatch) + cursorMarker + theProof.substring(offsetIntoMatch)),
-            name: firstBefore.name
-        }
+    if (proofClose === null) {
+      throw new Error("Could not find end of proof.");
     }
 
-    // TODO: add lean client
-    /**
-     * Try a proof/step by executing the given commands/tactics.
-     * @param steps The proof steps to try. This can be a single tactic or command or multiple separated by the
-     * usual `.` and space.
-     */
-    public async tryProof(steps: string): Promise<{finished: boolean, remainingGoals: string[]}> {
-        const execResponse = await executeCommandFullOutput(this.coqClient, steps);
-        return {
-            finished: execResponse.proof_finished,
-            remainingGoals: execResponse.goals.map(g => convertToString(g.ty))
-        };
+    // Get the text of the proof from the document, we need to add startProof to the index since the regex was run on a su
+    const theProof = docText.substring(0, proofClose.index! + proofClose[0].length);
+
+    // Helper function to remove input-area tags, coq markers and extra whitespace from input string
+    const removeMarkersAndWhitespace = (input: string) => {
+      return input.replace(/<input-area>\s*```coq\s*/g, "")
+        .replace(/\s*```\s*<\/input-area>/g, "")
+        .replace(/```coq/g, "")
+        .replace(/```/g, "")
+        .replace(/\s+/g, " ");
     }
+
+    const offsetIntoMatch = posAsOffset - startProof;
+
+    return {
+      full: removeMarkersAndWhitespace(theProof),
+      withCursorMarker: removeMarkersAndWhitespace(theProof.substring(0, offsetIntoMatch) + cursorMarker + theProof.substring(offsetIntoMatch)),
+      name: firstBefore.name
+    }
+  }
+
+  // TODO: add lean client
+  /**
+   * Try a proof/step by executing the given commands/tactics.
+   * @param steps The proof steps to try. This can be a single tactic or command or multiple separated by the
+   * usual `.` and space.
+   */
+  public async tryProof(steps: string): Promise<{ finished: boolean, remainingGoals: string[] }> {
+    const execResponse = await executeCommandFullOutput(this.coqClient, steps);
+    return {
+      finished: execResponse.proof_finished,
+      remainingGoals: execResponse.goals.map(g => convertToString(g.ty))
+    };
+  }
 
   /**
    * Attempts to install all required libraries
@@ -696,8 +707,6 @@ export class Waterproof implements Disposable {
         workspace.fs.readFile(newFilePath).then(
           (data) => {
             workspace.fs.writeFile(uri, data).then(() => {
-              // Open the file using the waterproof editor
-              // TODO: Hardcoded `coqEditor.coqEditor`.
               commands.executeCommand(
                 "vscode.openWith",
                 uri,
@@ -714,11 +723,6 @@ export class Waterproof implements Disposable {
       });
   }
 
-  /**
-   * Handle the newWaterproofDocument command.
-   * This command can be either activated by the user via the 'command palette'
-   * or by using the File -> New File... option.
-   */
   private async newFileCommand(): Promise<void> {
     const hasWorkspaceOpen =
       workspace.workspaceFolders !== undefined &&
@@ -750,8 +754,6 @@ export class Waterproof implements Disposable {
         workspace.fs.readFile(newFilePath).then(
           (data) => {
             workspace.fs.writeFile(uri, data).then(() => {
-              // Open the file using the waterproof editor
-              // TODO: Hardcoded `coqEditor.coqEditor`.
               commands.executeCommand(
                 "vscode.openWith",
                 uri,
@@ -768,13 +770,6 @@ export class Waterproof implements Disposable {
       });
   }
 
-  /**
-   * Registers a new Waterproof command and adds it to `disposables`.
-   *
-   * @param name the identifier for the command (after the "waterproof." prefix)
-   * @param handler the function that runs when the command is executed
-   * @param editorCommand whether to register a "text editor" or ordinary command
-   */
   private registerCommand(
     name: string,
     handler: (...args: unknown[]) => void,
@@ -786,9 +781,6 @@ export class Waterproof implements Disposable {
     this.disposables.push(register("waterproof." + name, handler, this));
   }
 
-  /**
-   * Remove solutions from document and open save dialog for the solution-less file.
-   */
   async exportExerciseSheet() {
     const document = this.coqClient.activeDocument;
     if (document) {
@@ -804,38 +796,34 @@ export class Waterproof implements Disposable {
     }
   }
 
-  /**
-   * Create the lsp client and update relevant status components
-   */
   async initializeClient(): Promise<void> {
     wpl.log("Start of initializeClient");
 
-    // Whether the user has decided to skip the launch checks
     const launchChecksDisabled = WaterproofConfigHelper.get(
       WaterproofSetting.SkipLaunchChecks
     );
 
-        if (launchChecksDisabled || this._isWeb) {
-            const reason = launchChecksDisabled ? "Launch checks disabled by user." : "Web extension, skipping launch checks.";
-            wpl.log(`${reason} Attempting to launch client...`);
-        } else {
-            // Run the version checker.
-            const requiredCoqLSPVersion = 
-              WaterproofPackageJSON.requiredCoqLspVersion(this.context);
-            const requiredCoqWaterproofVersion =  
-              WaterproofPackageJSON.requiredCoqWaterproofVersion(this.context);
-            const versionChecker = 
-              new VersionChecker(this.context, requiredCoqLSPVersion, requiredCoqWaterproofVersion);
+    if (launchChecksDisabled || this._isWeb) {
+      const reason = launchChecksDisabled ? "Launch checks disabled by user." : "Web extension, skipping launch checks.";
+      wpl.log(`${reason} Attempting to launch client...`);
+    } else {
+      // Run the version checker.
+      const requiredCoqLSPVersion =
+        WaterproofPackageJSON.requiredCoqLspVersion(this.context);
+      const requiredCoqWaterproofVersion =
+        WaterproofPackageJSON.requiredCoqWaterproofVersion(this.context);
+      const versionChecker =
+        new VersionChecker(this.context, requiredCoqLSPVersion, requiredCoqWaterproofVersion);
 
-            // Check whether we can find coq-lsp
-            const foundServer = await versionChecker.prelaunchChecks();
-            if (foundServer) {
-                // Only run the version checker after we know that there is a valid coq-lsp server
-                versionChecker.run();
-            } else {
-                this.statusBar.failed("LSP not found");
-            }
-        }
+      // Check whether we can find coq-lsp
+      const foundServer = await versionChecker.prelaunchChecks();
+      if (foundServer) {
+        // Only run the version checker after we know that there is a valid coq-lsp server
+        versionChecker.run();
+      } else {
+        this.statusBar.failed("LSP not found");
+      }
+    }
 
     if (this.coqClient?.isRunning()) {
       return Promise.reject(
@@ -843,18 +831,18 @@ export class Waterproof implements Disposable {
       );
     }
 
-        const serverOptions = CoqLspServerConfig.create(
-            // TODO: Support +coqversion versions.
-            WaterproofPackageJSON.requiredCoqLspVersion(this.context).slice(2)
-        );
+    const serverOptions = CoqLspServerConfig.create(
+      // TODO: Support +coqversion versions.
+      WaterproofPackageJSON.requiredCoqLspVersion(this.context).slice(2)
+    );
 
-        const clientOptions: LanguageClientOptions = {
-            documentSelector: [{ language: "markdown" }, { language: "coq" }, { language: "lean4" }],  // .mv, .v, and .lean files
-            outputChannelName: "Waterproof LSP Events (Initial)",
-            revealOutputChannelOn: RevealOutputChannelOn.Info,
-            initializationOptions: serverOptions,
-            markdown: { isTrusted: true, supportHtml: true },
-        };
+    const clientOptions: LanguageClientOptions = {
+      documentSelector: [{ language: "markdown" }, { language: "coq" }, { language: "lean4" }],  // .mv, .v, and .lean files
+      outputChannelName: "Waterproof LSP Events (Initial)",
+      revealOutputChannelOn: RevealOutputChannelOn.Info,
+      initializationOptions: serverOptions,
+      markdown: { isTrusted: true, supportHtml: true },
+    };
 
     wpl.log("Initializing client...");
     this.coqClient = this.clientFactory(
@@ -865,16 +853,15 @@ export class Waterproof implements Disposable {
     return this.coqClient.startWithHandlers(this.webviewManager).then(
       () => {
         this.webviewManager.open("goals");
-        // show user that LSP is working
         this.statusBar.update(true);
         this.coqClientRunning = true;
         wpl.log("Client initialization complete.");
       },
-      (reason) => {
+      (reason: any) => {
         const message = reason.toString();
         wpl.log(`Error during client initialization: ${message}`);
         this.statusBar.failed(message);
-        throw reason; // keep chain rejected
+        throw reason;
       }
     );
   }
@@ -901,11 +888,20 @@ export class Waterproof implements Disposable {
       "lean"
     ) as LeanLspClient;
 
+    this.leanClient.setGoalsPanel(this.goalsPanel);
+    this.goalsPanel.setLeanClient(this.leanClient);
+
     return this.leanClient.startWithHandlers(this.webviewManager).then(
-      () => {
+      async () => {
         this.webviewManager.open("goals");
         this.statusBar.update(true);
         this.leanClientRunning = true;
+
+        const initResult = (this.leanClient as any).initializeResult;
+        if (initResult) {
+          await this.goalsPanel.notifyServerRestarted(initResult);
+        }
+
         wpl.log("Lean client initialization complete.");
       },
       (reason) => {
@@ -926,10 +922,6 @@ export class Waterproof implements Disposable {
     await this.initializeClient();
   }
 
-  /**
-   * Toggles the state of the Coq LSP client. That is, stop the client if it's running and
-   * otherwise initialize it.
-   */
   private toggleClient(): Promise<void> {
     if (this.coqClient?.isRunning()) {
       return this.stopClient();
@@ -938,9 +930,6 @@ export class Waterproof implements Disposable {
     }
   }
 
-  /**
-   * Disposes of the Coq LSP client.
-   */
   private async stopClient(): Promise<void> {
     if (this.coqClient.isRunning()) {
       for (const g of this.goalsComponents) g.disable();
@@ -952,10 +941,6 @@ export class Waterproof implements Disposable {
     }
   }
 
-  /**
-   * This function gets called on TextEditorSelectionChange events and it requests the goals
-   * if needed
-   */
   private async updateGoalsCoq(
     document: TextDocument,
     position: Position
@@ -974,14 +959,14 @@ export class Waterproof implements Disposable {
     );
     wpl.debug(`Requesting goals for components: ${this.goalsComponents}`);
     this.coqClient.requestGoals(params).then(
-      (response) => {
+      (response: any) => {
         wpl.debug(`Received goals response: ${JSON.stringify(response)}`);
         for (const g of this.goalsComponents) {
           wpl.debug(`Updating goals component: ${g.constructor.name}`);
           g.updateGoals(response);
         }
       },
-      (reason) => {
+      (reason: any) => {
         wpl.debug(`Failed for reason: ${reason}`);
         for (const g of this.goalsComponents) {
           wpl.debug(`Failed to update goals component: ${g.constructor.name}`);
@@ -991,10 +976,6 @@ export class Waterproof implements Disposable {
     );
   }
 
-  /**
-   * This function gets called on TextEditorSelectionChange events and it requests the goals
-   * if needed
-   */
   private async updateGoalsLean(
     document: TextDocument,
     position: Position
@@ -1012,6 +993,15 @@ export class Waterproof implements Disposable {
       wpl.debug("ERROR: Lean client is not running!");
       return;
     }
+
+    const location: Location = {
+      uri: document.uri.toString(),
+      range: {
+        start: { line: position.line, character: position.character },
+        end: { line: position.line, character: position.character }
+      }
+    };
+    this.goalsPanel.updateLocation(location);
 
     const params = this.leanClient.createGoalsRequestParameters(document, position);
     //wpl.debug(`Request params: ${JSON.stringify(params)}`);
@@ -1050,7 +1040,6 @@ export class Waterproof implements Disposable {
 }
 
 export async function deactivate(): Promise<void> {
-  // stop Lean server if running
   await deactivateLeanClient();
   return;
 }

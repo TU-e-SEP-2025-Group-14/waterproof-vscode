@@ -292,6 +292,7 @@ export class WebviewManager extends EventEmitter {
      * @param message The message.
      */
     private onToolsMessage(id: string, msg: Message) {
+        console.log(msg);
         switch (msg.type) {
             case MessageType.insert:
                 {

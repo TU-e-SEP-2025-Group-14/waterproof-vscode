@@ -1,9 +1,11 @@
 import { VSCodeButton, VSCodeDivider } from '@vscode/webview-ui-toolkit/react';
-import React, { useState } from 'react';
-import { MessageType } from '../../shared';
+import React, { useState, useEffect } from 'react';
+import { Message, MessageType } from '../../shared';
 
 // Import the JSON data containing the tactics
-import data from "../../completions/tactics.json";
+import dataCoq from "../../completions/tactics.json";
+// Import the new JSON data for Lean tactics (ensure this file exists!)
+import dataLean from "../../completions/tacticsLean.json";
 
 import '../styles/tactics.css';
 
@@ -13,6 +15,29 @@ const ProofAssistant = () => {
     // State variable to track tactic visibility
     const [tacticVisibility, setTacticVisibility] = useState({});
     const [value, setValue] = useState("");
+    
+    // State for the currently active tactics data (default to Coq)
+    const [tacticsData, setTacticsData] = useState(dataCoq);
+
+    // Listen for messages from the extension
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            const message = event.data as Message;
+            if (message.type === MessageType.setTacticsMode) {
+                if (message.body === 'lean') {
+                    setTacticsData(dataLean);
+                } else {
+                    setTacticsData(dataCoq);
+                }
+                // Reset search and visibility when switching modes
+                setTacticVisibility({});
+                setValue(""); 
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, []);
 
     // Function to toggle tactic visibility
     const toggleVisibility = (tacticName) => {
@@ -37,7 +62,6 @@ const ProofAssistant = () => {
     // Function to generate code for each tactic
     const generateCode = (tactic) => {
         const { label, description, example, template } = tactic;
-        // FIXME: 
         const name = label;
         const isVisible = tacticVisibility[name];
         return (
@@ -103,8 +127,8 @@ const ProofAssistant = () => {
                 onChange={handleChange}
                 onClick={handleClick} />
         </div><div className="proof-assistant">
-                {/* here we filter the data */}
-                {data.filter(item => item.label.toLowerCase().includes(value.toLowerCase())).map((tactic) => generateCode(tactic))}
+                {/* here we filter the data based on the active tacticsData */}
+                {tacticsData.filter(item => item.label.toLowerCase().includes(value.toLowerCase())).map((tactic) => generateCode(tactic))}
             </div></>);
 };
 

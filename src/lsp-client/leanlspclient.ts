@@ -35,6 +35,8 @@ type PlainGoalResult = PlainGoal | null;
 
 export class LeanLspClient extends (Mixed as any) {
   private readonly context: ExtensionContext;
+  private goalsPanel?: any;
+
   constructor(
     context: ExtensionContext,
     clientOptions?: LanguageClientOptions
@@ -212,21 +214,22 @@ export class LeanLspClient extends (Mixed as any) {
   getViewportNotificationName(): string {
     return "$/lean/viewRange";
   }
+
+  public setGoalsPanel(goalsPanel: any): void {
+    this.goalsPanel = goalsPanel;
+  }
+
   async startWithHandlers(webviewManager: WebviewManager): Promise<void> {
     this.webviewManager = webviewManager;
 
-    // Set up document change listener for Lean files
     this.disposables.push(workspace.onDidChangeTextDocument(event => {
       if (event.document.languageId.startsWith('lean') &&
         webviewManager.has(event.document.uri.toString())) {
 
-        // Get cursor position from the change event
         if (event.contentChanges.length > 0) {
           const change = event.contentChanges[0];
-          // The cursor is at the end of the change
           const cursorPos = change.range.end;
 
-          // Update the active cursor position
           this.activeCursorPosition = cursorPos;
           this.activeDocument = event.document;
         }
@@ -234,6 +237,18 @@ export class LeanLspClient extends (Mixed as any) {
         this.updateCompletions(event.document);
       }
     }));
+
+    (this as any).onNotification('textDocument/publishDiagnostics', (params: any) => {
+      if (this.goalsPanel && this.goalsPanel.sendServerNotification) {
+        this.goalsPanel.sendServerNotification('textDocument/publishDiagnostics', params);
+      }
+    });
+
+    (this as any).onNotification('$/lean/fileProgress', (params: any) => {
+      if (this.goalsPanel && this.goalsPanel.sendServerNotification) {
+        this.goalsPanel.sendServerNotification('$/lean/fileProgress', params);
+      }
+    });
 
     return super.startWithHandlers(webviewManager);
   }
