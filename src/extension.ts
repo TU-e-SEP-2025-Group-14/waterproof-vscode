@@ -154,7 +154,7 @@ export class Waterproof implements Disposable {
         wpl.log("Focus event received");
         if (document.languageId.startsWith("lean")) {
           this.goalsPanel.setMode('lean');
-          
+
           // Switch tactics panel to Lean mode (safely)
           this.safePostMessage("tactics", { type: MessageType.setTacticsMode, body: "lean" });
 
@@ -165,7 +165,7 @@ export class Waterproof implements Disposable {
             const waitForClient = async (): Promise<void> => {
               return new Promise((resolve) => {
                 const interval = setInterval(() => {
-                  if (isLeanClientRunning()) {
+                  if (this.leanClientRunning) {
                     clearInterval(interval);
                     resolve();
                   }
@@ -175,7 +175,7 @@ export class Waterproof implements Disposable {
             await waitForClient();
             wpl.log("Lean Client ready. Proceeding with focus event.");
           }
-          this.leanClient = <LeanLspClient>getLeanInstance();
+          //this.leanClient = <LeanLspClient>getLeanInstance();
           this.activeClient = "lean4";
           const editor = window.activeTextEditor;
           if (editor) {
@@ -496,9 +496,9 @@ export class Waterproof implements Disposable {
    */
   private safePostMessage(view: string, message: Message) {
     try {
-       this.webviewManager.postMessage(view, message);
+      this.webviewManager.postMessage(view, message);
     } catch (e) {
-       // Ignore errors if the view is not yet ready or visible
+      // Ignore errors if the view is not yet ready or visible
     }
   }
 
@@ -989,7 +989,7 @@ export class Waterproof implements Disposable {
       return;
     }
 
-    if (!this.leanClient.isRunning()) {
+    if (!this.leanClientRunning) {
       wpl.debug("ERROR: Lean client is not running!");
       return;
     }
