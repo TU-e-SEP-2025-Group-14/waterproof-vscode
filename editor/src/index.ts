@@ -8,9 +8,10 @@ import symbols from "../../completions/symbols.json";
 import "@impermeable/waterproof-editor/styles.css"
 import { vFileParser } from "./document-construction/vFile";
 import { coqdocToMarkdown } from "./coqdoc";
-import { topLevelBlocksLean, topLevelBlocksMV } from "./document-construction/construct-document";
+import { topLevelBlocksMV, topLevelBlocksLean } from "./document-construction/construct-document";
 import { tagConfigurationV } from "./vFileConfiguration";
 import { tagConfigurationLean } from "./leanFileConfiguration";
+import { LeanSerializer } from "./leanSerializer";
 
 /**
  * Very basic representation of the acquirable VSCodeApi.
@@ -62,6 +63,7 @@ function createConfiguration(format: FileFormat, codeAPI: VSCodeAPI) {
 		tagConfiguration: format === FileFormat.MarkdownV ? markdown.configuration("coq")
 		                                                  : (format === FileFormat.RegularV) ? tagConfigurationV : tagConfigurationLean,
 		disableMarkdownFeatures: format === FileFormat.RegularV ? ["code"] : [],
+		serializer: format === FileFormat.Lean ? new LeanSerializer() : undefined,
 	}
 
 	return cfg;
