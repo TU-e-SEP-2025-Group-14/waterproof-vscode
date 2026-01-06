@@ -22,6 +22,8 @@ import { WaterproofCompletion } from "@impermeable/waterproof-editor";
 import { MessageType } from "../../shared";
 import { DocumentSymbol, DocumentSymbolParams, DocumentSymbolRequest } from "vscode-languageclient";
 import { WebviewManager } from "../webviewManager";
+import { getLeanInputAreas, determineLeanProofStatus } from "./qedStatus";
+import { InputAreaStatus } from "@impermeable/waterproof-editor";
 
 type LC = new (...args: any[]) => any;
 const Mixed = AbstractLspClient(LanguageClient as unknown as LC);
@@ -36,7 +38,12 @@ type PlainGoalResult = PlainGoal | null;
 export class LeanLspClient extends (Mixed as any) {
   private readonly context: ExtensionContext;
   private goalsPanel?: any;
-
+  private computeInputAreaStatusTimer?: NodeJS.Timeout;
+  
+  setGoalsPanel(goalsPanel: any): void {
+    this.goalsPanel = goalsPanel;
+  }
+  
   constructor(
     context: ExtensionContext,
     clientOptions?: LanguageClientOptions
@@ -318,6 +325,69 @@ export class LeanLspClient extends (Mixed as any) {
       type: MessageType.setAutocomplete,
       body: completions,
     });
+  }
+
+  async computeInputAreaStatus(document: TextDocument) {
+    if (this.computeInputAreaStatusTimer) {
+      clearTimeout(this.computeInputAreaStatusTimer);
+    }
+    // Computing where all the input areas are requires a fair bit of work,
+    // so we add a debounce delay to this function to avoid recomputing on every keystroke.
+    this.computeInputAreaStatusTimer = setTimeout(async () => {
+      wpl.debug(`[computeInputAreaStatus] Computing input area status for ${document.uri.fsPath}`);
+      
+      // Check if client is running before attempting status computation
+      if (!this.isRunning()) {
+        wpl.debug("[computeInputAreaStatus] Lean client not running, skipping status computation");
+        // Still send empty array so editor knows there are no status updates
+        this.webviewManager!.postAndCacheMessage(document, {
+          type: MessageType.qedStatus,
+          body: []
+        });
+        return;
+      }
+
+      // get input areas based on Lean tags
+      const inputAreas = getLeanInputAreas(document);
+      if (!inputAreas) {
+        wpl.debug("[computeInputAreaStatus] No valid input areas found in document");
+        // No valid input areas found, send empty array
+        this.webviewManager!.postAndCacheMessage(document, {
+          type: MessageType.qedStatus,
+          body: []
+        });
+        return;
+      }
+
+      wpl.debug(`[computeInputAreaStatus] Found ${inputAreas.length} input area(s)`);
+      inputAreas.forEach((area, index) => {
+        wpl.debug(`[computeInputAreaStatus] Input area ${index}: lines ${area.start.line + 1}-${area.end.line + 1}, chars ${area.start.character}-${area.end.character}`);
+      });
+
+      // for each input area, check the proof status
+      try {
+        const statuses = await Promise.all(inputAreas.map(async (area, index) => {
+          wpl.debug(`[computeInputAreaStatus] Determining status for input area ${index}...`);
+          const status = await determineLeanProofStatus(this, document, area);
+          wpl.debug(`[computeInputAreaStatus] Input area ${index} status: ${status}`);
+          return status;
+        }));
+
+        wpl.debug(`[computeInputAreaStatus] Sending statuses to editor: [${statuses.join(', ')}]`);
+        // forward statuses to corresponding ProseMirror editor
+        this.webviewManager!.postAndCacheMessage(document, {
+          type: MessageType.qedStatus,
+          body: statuses
+        });
+      } catch (reason) {
+        wpl.debug(`[computeInputAreaStatus] Error computing Lean input area status: ${reason}`);
+        // Send empty array on error
+        this.webviewManager!.postAndCacheMessage(document, {
+          type: MessageType.qedStatus,
+          body: []
+        });
+      }
+    }, 250);
   }
 
 }

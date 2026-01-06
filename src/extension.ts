@@ -120,7 +120,14 @@ export class Waterproof implements Disposable {
       WebviewManagerEvents.editorReady,
       (document: TextDocument) => {
         if (document.languageId.startsWith("lean")) {
-          this.leanClient.updateCompletions(document);
+          // Only update completions and status if client is available and running
+          if (this.leanClient && this.leanClient.isRunning && this.leanClient.isRunning()) {
+            this.leanClient.updateCompletions(document);
+            // Compute input area status when editor is ready
+            this.leanClient.computeInputAreaStatus(document);
+          } else {
+            wpl.debug("[editorReady] Lean client not ready yet, skipping completions and status update");
+          }
         } else {
           this.coqClient.updateCompletions(document);
         }
@@ -868,8 +875,14 @@ export class Waterproof implements Disposable {
 
   async initializeLeanClient(): Promise<void> {
     wpl.log("Start of initializeLeanClient");
+    // #region agent log
+    fetch('http://localhost:7242/ingest/7dc4b5b8-ed32-4102-93dd-c97a753e1cb4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:876',message:'initializeLeanClient entry',data:{hasExistingClient:!!this.leanClient},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     if (this.leanClient?.isRunning && this.leanClient.isRunning()) {
+      // #region agent log
+      fetch('http://localhost:7242/ingest/7dc4b5b8-ed32-4102-93dd-c97a753e1cb4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:879',message:'Client already running, rejecting',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       return Promise.reject(
         new Error("Cannot initialize Lean client; one is already running.")
       );
@@ -893,6 +906,58 @@ export class Waterproof implements Disposable {
 
     return this.leanClient.startWithHandlers(this.webviewManager).then(
       async () => {
+        wpl.log("Lean client start() resolved, waiting for Running state...");
+        
+        // Wait for the client to reach Running state (state === 2)
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            
+            reject(new Error("Timeout waiting for Lean client to reach Running state"));
+          }, 30000); // 30 second timeout
+
+          const initialState = (this.leanClient as any).state;
+          
+          if (initialState === 2) {
+            clearTimeout(timeout);
+            resolve();
+            return;
+          }
+
+          const onDidChangeState = (this.leanClient as any).onDidChangeState;
+          
+          const disp = onDidChangeState?.(
+            ({ newState }: any) => {
+          
+              wpl.log(`[LeanClient] State changed to: ${newState} (${newState === 2 ? 'Running' : newState === 1 ? 'Starting' : 'Stopped'})`);
+              if (newState === 2) {
+                clearTimeout(timeout);
+                disp?.dispose?.();
+                resolve();
+              } else if (newState === 3 || newState === 0) {
+                // Failed or stopped
+                clearTimeout(timeout);
+                disp?.dispose?.();
+              
+                reject(new Error(`Lean client failed to start (state: ${newState})`));
+              }
+            }
+          );
+
+          if (!disp) {
+            clearTimeout(timeout);
+            // If there's no state change handler, check if it's already running
+            const isRunning = (this.leanClient as any).isRunning?.();
+            
+            if (isRunning) {
+              resolve();
+            } else {
+              reject(new Error("No state change handler available and client is not running"));
+            }
+          }
+        });
+
+        wpl.log("Lean client reached Running state");
+        
         this.webviewManager.open("goals");
         this.statusBar.update(true);
         this.leanClientRunning = true;
@@ -908,6 +973,7 @@ export class Waterproof implements Disposable {
         const message = String(reason);
         wpl.log(`Error during Lean client initialization: ${message}`);
         this.statusBar.failed(message);
+        this.leanClientRunning = false;
         throw reason;
       }
     );

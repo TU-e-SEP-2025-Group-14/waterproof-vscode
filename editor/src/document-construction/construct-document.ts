@@ -61,24 +61,35 @@ export function topLevelBlocksLean(inputDocument: string): WaterproofDocument {
 
     // go over all tags
     let prevEnd = 0;
-    tags.forEach((tag: RegExpExecArray) => {
+    tags.forEach((tag: RegExpExecArray, tagIndex: number) => {
+        // Trim whitespace from captured content for matching
+        const tagContent = tag[1].trim();
+
         // add a code block with the preceding text
         pushCodeBlock(prevEnd, tag.index);
 
-        if (tag[1] === "end") {
+        if (tagContent === "end") {
             // TODO: throw an error
-            if (currentBlock === null) return;  // not in a block, ignore
+            if (currentBlock === null) {
+                console.warn(`[PARSER DEBUG] Tag ${tagIndex}: Found "end" tag without matching "begin". prevEnd=${prevEnd}, tag.index=${tag.index}`);
+                prevEnd = tag.index + tag[0].length; // FIX: Update prevEnd even when skipping
+                return;  // not in a block, ignore
+            }
 
             const range = { from: currentBlock.index, to: tag.index + tag[0].length }
             const innerRange = { from: currentBlock.index + currentBlock[0].length, to: tag.index };
             const content = inputDocument.substring(innerRange.from, innerRange.to);
-            if (currentBlock[1].match(/^begin input$/)) {
+            const currentBlockContent = currentBlock[1].trim();
+            if (currentBlockContent === "begin input") {
+                console.log(`[PARSER DEBUG] Tag ${tagIndex}: Creating InputAreaBlock at range ${range.from}-${range.to}`);
                 blocks.push(new InputAreaBlock(content, range, innerRange, innerBlocks));
                 innerBlocks = [];
                 prevEnd = tag.index + tag[0].length;
                 currentBlock = null;
-            } else if (currentBlock[1].match(/^begin details : /)) {
-                const title = currentBlock[1].match(/^begin details : ([\s\S]*)/)[1];
+            } else if (currentBlockContent.match(/^begin details : /)) {
+                console.log(`[PARSER DEBUG] Tag ${tagIndex}: Creating HintBlock`);
+                const titleMatch = currentBlockContent.match(/^begin details : ([\s\S]*)/);
+                const title = titleMatch ? titleMatch[1].trim() : "";
                 blocks.push(new HintBlock(content, title, range, innerRange, innerBlocks));
                 innerBlocks = [];
                 prevEnd = tag.index + tag[0].length;
@@ -93,8 +104,12 @@ export function topLevelBlocksLean(inputDocument: string): WaterproofDocument {
             const innerRange = { from: range.from + '/-!'.length, to: range.to - '-/'.length };
             blocks.push(new MarkdownBlock(content, range, innerRange));
             prevEnd = tag.index + tag[0].length;
-        } else if (tag[1].match(/^begin (?:input|details : [\s\S]*?)$/)) {
+        } else if (tagContent.match(/^begin (?:input|details : [\s\S]*?)$/)) {
+            console.log(`[PARSER DEBUG] Tag ${tagIndex}: Found opening tag "${tagContent}", setting currentBlock`);
             currentBlock = tag;
+            prevEnd = tag.index + tag[0].length;
+        } else {
+            console.log(`[PARSER DEBUG] Tag ${tagIndex}: Unhandled tag content "${tagContent}"`);
             prevEnd = tag.index + tag[0].length;
         }
     })
