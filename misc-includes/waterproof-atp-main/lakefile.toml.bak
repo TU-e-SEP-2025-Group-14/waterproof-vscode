@@ -1,0 +1,10 @@
+name = "WaterproofDocument"
+version = "0.1.0"
+defaultTargets = ["WateproofDocument"]
+
+[[lean_lib]]
+name = "WaterproofDocument"
+
+[[require]]
+name = "verbose"
+git = "https://github.com/PatrickMassot/verbose-lean4.git"

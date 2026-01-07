@@ -1,0 +1,294 @@
+<hint title="Import libs">
+```coq
+From Stdlib Require Import Rbase.
+From Stdlib Require Import Rfunctions.
+Require Import Waterproof.Waterproof.
+Require Import Waterproof.Notations.Common.
+Require Import Waterproof.Notations.Reals.
+Require Import Waterproof.Notations.Sets.
+Require Import Waterproof.Chains.
+Require Import Waterproof.Tactics.
+Require Import Waterproof.Libs.Analysis.SupAndInf.
+Require Import Waterproof.Automation.
+
+Waterproof Enable Automation RealsAndIntegers.
+
+
+Open Scope R_scope.
+Open Scope subset_scope.
+Set Default Goal Selector "!".
+
+Set Bullet Behavior "Waterproof Relaxed Subproofs".
+
+
+Notation "'max(' x , y )" := (Rmax x y)
+  (format "'max(' x ,  y ')'").
+Notation "'min(' x , y )" := (Rmin x y)
+  (format "'min(' x ,  y ')'").
+```
+</hint>
+## ATC - 005
+Edit this line
+$$E = mc^2$$
+```coq
+Lemma test005:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 008
+```coq
+Lemma test008:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+Take a ∈ ℝ.
+Take b > 5.
+Choose c := b - a + 1.
+{ Indeed, c ∈ ℝ. }
+We conclude that c > b - a.
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 009
+<hint title="Hint for the student">
+Hello
+</hint>
+```coq
+Lemma test009:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 010
+```coq
+Lemma test010:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+Proof.
+```
+<input-area>
+```coq
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 011
+```coq
+Lemma test011:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+Take a ∈ ℝ.
+Take b > 5.
+Choose c := b - a + 1.
+{ Indeed, c ∈ ℝ. }
+We conclude that c > b - a.
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 013
+```coq
+Lemma test013:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+<!-- Take a ∈ ℝ. -->
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 014
+```coq
+Lemma test014:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+Take a ∈ ℝ.
+Take b > 5.
+Choose c := b - a + 1.
+{ Indeed, c ∈ ℝ. }
+We conclude that c > b - a.
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 015
+```coq
+Lemma test015:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 016
+```coq
+Lemma test016:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 017
+```coq
+Lemma test017:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 018
+```coq
+Lemma test018:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 019
+```coq
+Lemma test019:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
+## ATC - 023
+### Markdown
+$$a^2+b^2=c^2$$
+<hint title="Some hint">
+Hello
+</hint>
+```coq
+Lemma test023:
+  ∀ a ∈ ℝ,
+    ∀ b > 5,
+      ∃ c ∈ ℝ,
+        c > b - a.
+Proof.
+```
+<input-area>
+```coq
+
+```
+</input-area>
+```coq
+Qed.
+```
+
