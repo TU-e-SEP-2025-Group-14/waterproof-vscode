@@ -1,6 +1,6 @@
 [
     {
-        "label": "Help.",
+        "label": "help",
         "type": "type",
         "detail": "tactic",
         "template": "Help.${}",
