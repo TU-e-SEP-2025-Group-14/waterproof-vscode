@@ -13,6 +13,7 @@ import { MessageType } from "../../shared";
 import { WpDiagnostic } from "./clientTypes";
 import { determineProofStatus, getInputAreas } from "./qedStatus";
 import { GoalAnswer, GoalRequest } from "../../lib/types";
+import { Hypothesis } from "../api";
 
 function vscodeSeverityToWaterproof(severity: DiagnosticSeverity): Severity {
     switch (severity) {
@@ -305,6 +306,8 @@ export abstract class LspClient<GoalRequestT extends GoalRequest, GoalAnswerT ex
     abstract requestGoals(position: Position): Promise<GoalAnswerT>;
     /** Sends an LSP request to retrieve the goals at the active cursor position. */
     abstract requestGoals(): Promise<GoalAnswerT>;
+    /** Sends and LSP request to retrieve the goals at the active cursor position and returns in a convenient format*/
+    abstract goals(): Promise<{ currentGoal: string, hypotheses: Array<Hypothesis>, otherGoals: string[] }>;
 
     /** Sends an LSP request to retrieve the symbols in the `activeDocument`. */
     async requestSymbols(document?: TextDocument): Promise<DocumentSymbol[]> {

@@ -1,12 +1,13 @@
 import { Position, Range, TextDocument } from "vscode";
 import { VersionedTextDocumentIdentifier } from "vscode-languageclient";
 
-import { CoqGoalAnswer, CoqGoalRequest, CoqServerStatusToServerStatus, GoalRequest, PpString } from "../../lib/types";
+import { convertToString, CoqGoalAnswer, CoqGoalRequest, CoqServerStatusToServerStatus, GoalRequest, PpString } from "../../lib/types";
 import { MessageType } from "../../shared";
 import { coqFileProgressNotificationType, coqGoalRequestType, serverStatusNotificationType } from "./requestTypes";
 import { WaterproofLogger as wpl } from "../helpers";
 import { LspClient } from "./abstractLspClient";
 import { LanguageClient } from "vscode-languageclient/node";
+import { Hypothesis } from "../api";
 
 export class CoqLspClient extends LspClient<CoqGoalRequest, CoqGoalAnswer<PpString>> {
     language = "rocq";
@@ -35,9 +36,9 @@ export class CoqLspClient extends LspClient<CoqGoalRequest, CoqGoalAnswer<PpStri
 
             // Handle the server status notification
             this.webviewManager!.postMessage(document.uri.toString(), {
-                    type: MessageType.serverStatus,
-                    body: CoqServerStatusToServerStatus(params)
-                }
+                type: MessageType.serverStatus,
+                body: CoqServerStatusToServerStatus(params)
+            }
             );
         }));
     }
@@ -49,7 +50,7 @@ export class CoqLspClient extends LspClient<CoqGoalRequest, CoqGoalAnswer<PpStri
                 document.version
             ),
             position: {
-                line:      position.line,
+                line: position.line,
                 character: position.character
             }
         };
@@ -67,6 +68,30 @@ export class CoqLspClient extends LspClient<CoqGoalRequest, CoqGoalAnswer<PpStri
         return this.client.sendRequest(coqGoalRequestType, params);
     }
 
+    public async goals(): Promise<{ currentGoal: string, hypotheses: Array<Hypothesis>, otherGoals: string[] }> {
+
+        if (!this.activeDocument || !this.activeCursorPosition) {
+            throw new Error("No active document or cursor position.");
+        }
+
+        const document = this.activeDocument;
+        const position = this.activeCursorPosition;
+
+        const params = this.createGoalsRequestParameters(document, position);
+        const goalResponse = await this.requestGoals(params);
+
+        if (goalResponse.goals === undefined) {
+            throw new Error("Response contained no goals.");
+        }
+
+        // Convert goals and hypotheses to strings
+        const goalsAsStrings = goalResponse.goals.goals.map(g => convertToString(g.ty));
+        // Note: only taking hypotheses from the first goal
+        const hyps = goalResponse.goals.goals[0].hyps.map(h => { return { name: convertToString(h.names[0]), content: convertToString(h.ty) }; });
+
+        return { currentGoal: goalsAsStrings[0], hypotheses: hyps, otherGoals: goalsAsStrings.slice(1) };
+    }
+
     async sendViewportHint(document: TextDocument, start: number, end: number): Promise<void> {
         if (!this.client.isRunning()) return;
         const startPos = document.positionAt(start);
@@ -78,7 +103,7 @@ export class CoqLspClient extends LspClient<CoqGoalRequest, CoqGoalAnswer<PpStri
         }
 
         const requestBody = {
-            'textDocument':  VersionedTextDocumentIdentifier.create(
+            'textDocument': VersionedTextDocumentIdentifier.create(
                 document.uri.toString(),
                 document.version
             ),

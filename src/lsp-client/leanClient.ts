@@ -7,6 +7,7 @@ import { leanFileProgressNotificationType, leanGoalRequestType } from "./request
 import { WaterproofLogger as wpl } from "../helpers";
 import { WpDiagnostic } from "./clientTypes";
 import { WebviewManager } from "../webviewManager";
+import { Hypothesis } from "../api";
 
 export class LeanLspClient extends LspClient<LeanGoalRequest, LeanGoalAnswer> {
     language = "lean4";
@@ -64,6 +65,25 @@ export class LeanLspClient extends LspClient<LeanGoalRequest, LeanGoalAnswer> {
         }
         wpl.debug(`Sending request for goals with params: ${JSON.stringify(params)}`);
         return this.client.sendRequest(leanGoalRequestType, params);
+    }
+
+    public async goals(): Promise<{ currentGoal: string, hypotheses: Array<Hypothesis>, otherGoals: string[] }> {
+
+        if (!this.activeDocument || !this.activeCursorPosition) {
+            throw new Error("No active document or cursor position.");
+        }
+
+        const document = this.activeDocument;
+        const position = this.activeCursorPosition;
+
+        const params = this.createGoalsRequestParameters(document, position);
+        const goalResponse = await this.requestGoals(params);
+
+        if (goalResponse.goals === undefined || goalResponse.goals.length === 0) {
+            throw new Error("Response contained no goals.");
+        }
+
+        return { currentGoal: goalResponse.goals[0], hypotheses: [], otherGoals: goalResponse.goals.slice(1) };
     }
 
     async sendViewportHint(_document: TextDocument, _start: number, _end: number): Promise<void> {

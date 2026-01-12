@@ -498,33 +498,7 @@ export class Waterproof implements Disposable {
      * Request the goals for the current document and cursor position.
      */
     public async goals(): Promise<{ currentGoal: string, hypotheses: Array<Hypothesis>, otherGoals: string[] }> {
-    
-        if (!this.client.activeDocument || !this.client.activeCursorPosition) {
-            throw new Error("No active document or cursor position.");
-        }
-
-        const document = this.client.activeDocument;
-        const position = this.client.activeCursorPosition;
-
-        const params = this.client.createGoalsRequestParameters(document, position);
-        const goalResponse = await this.client.requestGoals(params);
-
-        if (goalResponse.goals === undefined || goalResponse.goals.length === 0) {
-            throw new Error("Response contained no goals.");
-        }
-
-        if (this.activeClient === "lean4") {
-            
-            return { currentGoal: goalResponse.goals[0], hypotheses: [], otherGoals: goalResponse.goals.slice(1) };
-        } else {
-
-            // Convert goals and hypotheses to strings
-            const goalsAsStrings = goalResponse.goals.goals.map(g => convertToString(g.ty));
-            // Note: only taking hypotheses from the first goal
-            const hyps = goalResponse.goals.goals[0].hyps.map(h => { return { name: convertToString(h.names[0]), content: convertToString(h.ty) }; });
-
-            return { currentGoal: goalsAsStrings[0], hypotheses: hyps, otherGoals: goalsAsStrings.slice(1) };
-        }
+        return this.client.goals();
     }
 
     /**
@@ -643,7 +617,8 @@ export class Waterproof implements Disposable {
                     // Simple fixed scripts are run, the user is able to stop these but they are not considered errors
                     // as the user has freedom to choose the steps and can rerun the command.
                 }
-                this.initializeClient();
+                this.initializeCoqClient();
+                this.initializeLeanClient();
                 resolve(true);
             });
         });
