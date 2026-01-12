@@ -229,6 +229,8 @@ export class ProseMirrorWebview extends EventEmitter {
                     this,
                     this.undoHandler.bind(this),
                     this.redoHandler.bind(this));
+                // TODO: Handle this properly
+                this.themeUpdate();
             } else {
                 // Dispose of the overwritten undo and redo commands when the editor is not active.
                 this._provider.disposeHistoryCommandListeners(this);
@@ -269,6 +271,8 @@ export class ProseMirrorWebview extends EventEmitter {
         </body>
         </html>
         `;
+        // TODO: find a proper way to do this
+        this.themeUpdate();
     }
 
     private themeUpdate() {
@@ -287,7 +291,10 @@ export class ProseMirrorWebview extends EventEmitter {
         })();
         this.postMessage({
             type: MessageType.themeUpdate,
-            body: themeType
+            body: {
+                theme: themeType,
+                lang: this.document.languageId
+            }
         }, true);
     }
 
