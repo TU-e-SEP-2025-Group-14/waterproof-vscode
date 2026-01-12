@@ -142,7 +142,7 @@ export class Waterproof implements Disposable {
                             "Focus event received before client is ready. Waiting..."
                         );
                         // Initiliaze Lean client
-                        if (!this.coqClient?.client.isRunning()) {
+                        if (!this.leanClient?.client.isRunning()) { // this if is probably not needed
                             this.initializeLeanClient(); 
                         }
                         const waitForClient = async (): Promise<void> => {
@@ -199,7 +199,7 @@ export class Waterproof implements Disposable {
                             "Focus event received before client is ready. Waiting..."
                         );
                         // Initiliaze Coq client
-                        if (!this.coqClient?.client.isRunning()) {
+                        if (!this.coqClient?.client.isRunning()) { // this if is probably not needed
                             this.initializeCoqClient(); 
                         }
                         const waitForClient = async (): Promise<void> => {
